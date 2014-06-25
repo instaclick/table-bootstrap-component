@@ -18,28 +18,38 @@ window.TableBootstrap = (function ($, Component) {
         TableComponent    = null,
         pageRequestParams = null;
 
-    function _createTableColumnModel(options) {
-        var model = [],
-            types = options.colTypes || [],
-            item  = null,
-            typeIndex = null;
-
-        options.colHeaders.forEach(function (column, index) {
-            item = {
+    function _createColumn(model, columnName, index) {
+        var column = {
                 sClass: 'column' + index,
-                sTitle: column,
-                bVisible: (column !== '')
-            };
+                sTitle: columnName,
+                bVisible: (columnName !== ''),
+                bAutoWidth: true,
+                bSortable: (this.colSortable.length === 0 || this.colSortable[index] === undefined || this.colSortable[index] !== false),
+                bSearchable: (this.colSearchable.length === 0 || this.colSearchable[index] === undefined || this.colSearchable[index] !== false)
+            },
+            typeIndex  = null;
 
-            if (options.colTypes.length && options.colTypes[index]) {
-                typeIndex     = options.colTypes[index];
-                item.bVisible = (typeIndex !== "hidden");
-                item.sClass  += " " + typeIndex;
-                item.sType    = typeIndex;
-            }
+        if (this.colTypes.length && this.colTypes[index]) {
+            typeIndex       = this.colTypes[index];
+            column.bVisible = (typeIndex !== "hidden");
+            column.sClass  += " " + typeIndex;
+            column.sType    = typeIndex;
+            typeIndex       = null;
+        }
 
-            model[index] = item;
-        });
+        if (this.colWidths.length && this.colWidths[index]) {
+            column.sWidth     = this.colWidths[index];
+            column.bAutoWidth = false;
+        }
+
+        model[index] = column;
+        column       = null;
+    }
+
+    function _createTableColumnModel(options) {
+        var model = [];
+
+        options.colHeaders.forEach(_createColumn.bind(options, model));
 
         return model;
     }
@@ -73,35 +83,8 @@ window.TableBootstrap = (function ($, Component) {
         _checkConfigType('oStdClasses');
         _checkConfigType('oTableTools');
 
-        if(options.colHeaders !== undefined) {
+        if (options.colHeaders !== undefined) {
             dataTableConfig.aoColumns = _createTableColumnModel(options);
-
-          var bAutoWidth = true;
-          if (options.colWidths!=undefined) {
-            $.each(options.colWidths,function(i,val){
-             if (val!=null){
-                dataTableConfig.aoColumns[i].sWidth=val;
-                bAutoWidth = false;
-              }
-            })
-          }; //colWidths
-          dataTableConfig.bAutoWidth = bAutoWidth;
-
-          if(options.colSortable!=undefined){
-            $.each(options.colSortable,function(i,val){
-              if (val!=null && ( !val || val == "false" ) ){
-                dataTableConfig.aoColumns[i].bSortable=false
-              }
-            })
-          }; //colSortable
-          if(options.colSearchable!=undefined){
-            $.each(options.colSearchable,function(i,val){
-              if (val!=null && ( !val || val == "false" ) ){
-                dataTableConfig.aoColumns[i].bSearchable=false
-              }
-            })
-          }; //colSearchable
-
         }
 
         return dataTableConfig;
@@ -165,6 +148,44 @@ window.TableBootstrap = (function ($, Component) {
         this.pagingCallback.apply(this, arguments);
     }
 
+    function _onTableClick(event) {
+        var chartDefinition = this.chartDefinition;
+
+        if (typeof chartDefinition.clickAction === 'function' || this.expandOnClick) {
+            var state    = {},
+                target   = $(event.target),
+                results  = this.rawData,
+                position = null;
+
+            if (!(target.parents('tbody').length)) {
+                return;
+            } else if (target.get(0).tagName != 'TD') {
+                target = target.closest('td');
+            }
+
+            position = this.dataTable.fnGetPosition(target.get(0));
+
+            state.rawData   = this.rawData;
+            state.tableData = this.dataTable.fnGetData();
+            state.colIdx    = position[2];
+            state.rowIdx    = position[0];
+            state.series    = results.resultset[state.rowIdx][0];
+            state.category  = results.metadata[state.colIdx].colName;
+            state.value     = results.resultset[state.rowIdx][state.colIdx];
+            state.colFormat = chartDefinition.colFormats[state.colIdx];
+            state.target    = target;
+
+
+            if (this.expandOnClick) {
+                this.handleExpandOnClick(state);
+            }
+
+            if ( chartDefinition.clickAction  ){
+                chartDefinition.clickAction.call(this,state);
+            }
+        }
+    }
+
 
     TableComponent = {
         update: function() {
@@ -190,7 +211,7 @@ window.TableBootstrap = (function ($, Component) {
 
         initialize: function() {
             if (this.chartDefinition == undefined) {
-                Dashboards.log("Fatal - No chart definition passed", "error");
+                Dashboards.log("Fatal - missing chart definition!", "error");
                 return;
             }
 
@@ -224,7 +245,7 @@ window.TableBootstrap = (function ($, Component) {
                     values = changedValues;
                 }
                 this.processTableComponentResponse(values);
-            },this);
+            }, this);
 
             this.extraOptions = this.extraOptions || [];
             this.extraOptions.push(["bServerSide",true]);
@@ -407,23 +428,28 @@ window.TableBootstrap = (function ($, Component) {
             return $table;
         },
 
-        processTableComponentResponse: function(json) {
+        addTableCssClasses: function() {
+            //set the default class
+            $context.addClass('form-inline table-responsive');
+            // modify table search input
+            $context.find('div.dataTables_filter input').addClass("form-control input-sm center-block");
+            // modify table length select
+            $context.find('div.dataTables_length select').addClass("form-control input-sm");
+        },
 
-            var myself             = this,
-                chartDefinition    = this.chartDefinition,
+        getDataTableConfig: function(json) {
+            var chartDefinition    = this.chartDefinition,
                 extraOptions       = {},
                 oldDataTableConfig = null,
                 dataTableConfig    = null;
 
-            $context.trigger('cdfTableComponentProcessResponse');
-
             // Set defaults for headers / types
             if (typeof chartDefinition.colHeaders === "undefined" || chartDefinition.colHeaders.length == 0) {
-                chartDefinition.colHeaders = json.metadata.map(function(i){return i.colName});
+                chartDefinition.colHeaders = json.metadata.map(function (i) {return i.colName});
             }
 
             if (typeof chartDefinition.colTypes === "undefined" || chartDefinition.colTypes.length == 0) {
-                chartDefinition.colTypes = json.metadata.map(function(i){return i.colType.toLowerCase()});
+                chartDefinition.colTypes = json.metadata.map(function (i) {return i.colType.toLowerCase()});
             }
 
             oldDataTableConfig = _getDataTableOptions(chartDefinition);
@@ -436,13 +462,11 @@ window.TableBootstrap = (function ($, Component) {
             dataTableConfig = $.extend(chartDefinition.dataTableOptions, oldDataTableConfig, extraOptions);
 
             /* Configure the table event handlers */
-            dataTableConfig.fnDrawCallback = _.bind(this.fnDrawCallback, this);
-            dataTableConfig.fnInitComplete = _.bind(this.fnInitComplete, this);
+            dataTableConfig.fnDrawCallback = this.fnDrawCallback.bind(this);
+            dataTableConfig.fnInitComplete = this.fnInitComplete.bind(this);
 
             /* fnServerData is required for server-side pagination */
             if (dataTableConfig.bServerSide) {
-                var myself = this;
-
                 dataTableConfig.fnServerData = _fnServerData.bind(this);
             }
 
@@ -453,58 +477,27 @@ window.TableBootstrap = (function ($, Component) {
                 dataTableConfig.aaData = json.resultset;
             }
 
+            return dataTableConfig;
+        },
+
+        processTableComponentResponse: function(json) {
+
+            var dataTableConfig = null;
+
+            $context.trigger('cdfTableComponentProcessResponse');
+            dataTableConfig = this.getDataTableConfig(json);
+
             /*
              * We'll first initialize a blank table so that we have a
              * table handle to work with while the table is redrawing
              */
-            this.dataTable = this.createDataTable(dataTableConfig);
-
-                //set the default class
-            $context.addClass('form-inline table-responsive');
-            // modify table search input
-            $context.find('div.dataTables_filter input').addClass("form-control input-sm center-block");
-            // modify table length select
-            $context.find('div.dataTables_length select').addClass("form-control input-sm");
-
-
+            this.dataTable        = this.createDataTable(dataTableConfig);
             // We'll create an Array to keep track of the open expandable rows.
             this.dataTable.anOpen = [];
 
-            $context.find('table').bind('click', function(e) {
-                if (typeof chartDefinition.clickAction === 'function' || myself.expandOnClick) {
-                    var state   = {},
-                        target  = $(e.target),
-                        results = myself.rawData;
+            this.addTableCssClasses();
 
-                    if (!(target.parents('tbody').length)) {
-                        return;
-                    } else if (target.get(0).tagName != 'TD') {
-                        target = target.closest('td');
-                    }
-
-                    var position = myself.dataTable.fnGetPosition(target.get(0));
-
-                    state.rawData   = myself.rawData;
-                    state.tableData = myself.dataTable.fnGetData();
-                    state.colIdx    = position[2];
-                    state.rowIdx    = position[0];
-                    state.series    = results.resultset[state.rowIdx][0];
-                    state.category  = results.metadata[state.colIdx].colName;
-                    state.value     =  results.resultset[state.rowIdx][state.colIdx];
-                    state.colFormat = chartDefinition.colFormats[state.colIdx];
-
-
-                state.target = target;
-
-
-                if ( myself.expandOnClick ) {
-                    myself.handleExpandOnClick(state);
-                }
-                if ( chartDefinition.clickAction  ){
-                    chartDefinition.clickAction.call(myself,state);
-                }
-              }
-            });
+            $context.find('table').on('click', _onTableClick.bind(this));
             $context.trigger('cdfTableComponentFinishRendering');
       },
 

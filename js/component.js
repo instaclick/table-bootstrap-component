@@ -62,7 +62,7 @@ window.TableBootstrap = (function ($, Component) {
                 dataTableConfig[key] = (typeof option === "string") ? eval("(" + option + ")") : option;
             };
 
-        if(options.tableStyle == "themeroller"){
+        if (options.tableStyle == "themeroller") {
             dataTableConfig.bJQueryUI = true;
         }
 
@@ -177,7 +177,7 @@ window.TableBootstrap = (function ($, Component) {
 
 
             if (this.expandOnClick) {
-                this.handleExpandOnClick(state);
+                this.onClickExpand(state);
             }
 
             if ( chartDefinition.clickAction  ){
@@ -186,8 +186,22 @@ window.TableBootstrap = (function ($, Component) {
         }
     }
 
+    function _preventDefaultExpand() {
+        $context.on('click', 'td.expandingClass', function(event) {
+            event.stopPropagation();
+            return;
+        });
+    }
+
+    function _closeExpandedRow(activeClass, row, index) {
+        $(row).removeClass(activeClass);
+        this.fnClose(row);
+        this.expandedRows.splice(index, 1);
+    }
+
 
     TableComponent = {
+        expandCSSClass: 'expandingClass',
         update: function() {
             if (!this.preExec()) {
                 return;
@@ -419,15 +433,6 @@ window.TableBootstrap = (function ($, Component) {
             }
         },
 
-        createDataTable: function (data) {
-            var $table = $("<table id='" + this.htmlObject + "Table' class='table table-striped table-bordered' width='100%'></table>");
-
-            $context.html($table);
-            $table.dataTable(data);
-
-            return $table;
-        },
-
         addTableCssClasses: function() {
             //set the default class
             $context.addClass('form-inline table-responsive');
@@ -435,6 +440,23 @@ window.TableBootstrap = (function ($, Component) {
             $context.find('div.dataTables_filter input').addClass("form-control input-sm center-block");
             // modify table length select
             $context.find('div.dataTables_length select').addClass("form-control input-sm");
+        },
+
+        addTableEvents: function() {
+            $context.find('table').on('click', _onTableClick.bind(this));
+        },
+
+        createDataTable: function (data) {
+            var $table = $("<table id='" + this.htmlObject + "Table' class='table table-striped table-bordered' width='100%'></table>");
+
+            $context.html($table);
+            $table.dataTable(data);
+            $table.expandedRows = [];
+
+            this.addTableCssClasses();
+            this.addTableEvents();
+
+            return $table;
         },
 
         getDataTableConfig: function(json) {
@@ -480,84 +502,80 @@ window.TableBootstrap = (function ($, Component) {
             return dataTableConfig;
         },
 
+        initDataTable: function (json) {
+            var dataTableConfig = this.getDataTableConfig(json);
+
+            this.dataTable = this.createDataTable(dataTableConfig);
+        },
+
         processTableComponentResponse: function(json) {
-
-            var dataTableConfig = null;
-
             $context.trigger('cdfTableComponentProcessResponse');
-            dataTableConfig = this.getDataTableConfig(json);
-
-            /*
-             * We'll first initialize a blank table so that we have a
-             * table handle to work with while the table is redrawing
-             */
-            this.dataTable        = this.createDataTable(dataTableConfig);
-            // We'll create an Array to keep track of the open expandable rows.
-            this.dataTable.anOpen = [];
-
-            this.addTableCssClasses();
-
-            $context.find('table').on('click', _onTableClick.bind(this));
+            this.initDataTable(json);
             $context.trigger('cdfTableComponentFinishRendering');
-      },
+        },
 
-      handleExpandOnClick: function(event) {
-        var myself = this,
-          detailContainerObj = myself.expandContainerObject,
-          activeclass = "expandingClass";
+        unExpandRow: function($tableRow, activeClass) {
+            var expandedRows = this.dataTable.expandedRows,
+                row          = $tableRow.get(0),
+                position     = $.inArray(row, expandedRows);
 
-        if(typeof activeclass === 'undefined'){
-          activeclass = "activeRow";
-        }
+            $tableRow.removeClass(activeClass);
+            this.dataTable.fnClose(row);
+            expandedRows.splice(position, 1);
+        },
 
-        var obj = event.target.closest("tr"),
-            a = event.target.closest("a");
+        closeExpandedRows: function () {
+            var dataTable   = this.dataTable;
 
-        if (a.hasClass ('info')) {
-          return;
-        } else {
-          var row = obj.get(0),
-              value = event.series,
-              htmlContent = $("#" + detailContainerObj).html(),
-              anOpen = myself.dataTable.anOpen,
-              i = $.inArray( row, anOpen );
+            dataTable.expandedRows.forEach(_closeExpandedRow.bind(dataTable, this.expandCSSClass));
+        },
 
-          if( obj.hasClass(activeclass) ){
-            obj.removeClass(activeclass);
-            myself.dataTable.fnClose( row );
-            anOpen.splice(i,1);
+        expandRow: function() {
+            var htmlContent  = $context.find("#" + expandContainerObject).html(),
+                expandedRows = this.dataTable.expandedRows,
+                row          = $tableRow.get(0),
+                position     = $.inArray(row, expandedRows);
 
-          } else {
-            // Closes all open expandable rows .
-            for ( var j=0; j < anOpen.length; j++ ) {
-              $(anOpen[j]).removeClass(activeclass);
-              myself.dataTable.fnClose( anOpen[j] );
-              anOpen.splice(j ,1);
-            }
-            obj.addClass(activeclass);
+            this.closeExpandedRows();
 
-            anOpen.push( row );
+            $tableRow.addClass(this.expandCSSClass);
+            expandedRows.push(row);
             // Since the switch to async, we need to open it first
-            myself.dataTable.fnOpen( row, htmlContent, activeclass );
+            this.dataTable.fnOpen(row, htmlContent, activeClass);
 
             //Read parameters and fire changes
-            var results = myself.queryState.lastResults();
-            $(myself.expandParameters).each(function f(i, elt) {
-              Dashboards.fireChange(elt[1], results.resultset[event.rowIdx][parseInt(elt[0],10)]);
+            var results = this.queryState.lastResults();
+            $(this.expandParameters).each(function f(i, elt) {
+                Dashboards.fireChange(elt[1], results.resultset[event.rowIdx][parseInt(elt[0],10)]);
             });
+        },
 
-          };
-        };
-        $("td.expandingClass").click(
-          function(event){
-            //Does nothing but it prevents problems on expandingClass clicks!
-            event.stopPropagation();
-            return;
-          }
-        );
-      }
+        checkExpand: function ($tableRow) {
+            var expandContainerObject = this.expandContainerObject,
+                row                   = $tableRow.get(0);
+
+            if ($tableRow.hasClass(this.expandCSSClass)) {
+                this.unExpandRow($tableRow);
+
+                return;
+            }
+
+            this.expandRow($tableRow, activeClass);
+        },
+
+        onClickExpand: function(event) {
+            var eventTarget = event.target,
+                $anchor     = eventTarget.closest('a');
+
+            if (!$anchor.hasClass('info')) {
+                return;
+            }
+
+            this.checkExpand(eventTarget.closest('tr'));
+            _preventDefaultExpand();
+        }
     };
 
-    return Component.extend(TableComponent);
 
+    return Component.extend(TableComponent);
 }(window.jQuery, window.UnmanagedComponent));
